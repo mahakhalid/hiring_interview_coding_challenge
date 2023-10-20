@@ -6,10 +6,13 @@ class Transaction < ApplicationRecord
   monetize :from_amount_cents, with_currency: ->(t) { t.from_currency }, numericality: { greater_than: 0 }
   monetize :to_amount_cents, with_currency: ->(t) { t.to_currency }
 
-  validates :first_name, presence: true, if: :large?
-  validates :last_name, presence: true, if: :large?
+  # Validation for first_name and last_name
+  validates :first_name, presence: true, if: -> { requires_personal_info? }
+
+  # Validation for currency selection
   validates :from_currency, inclusion: AVAILABLE_CURRENCIES
   validates :to_currency, inclusion: AVAILABLE_CURRENCIES
+
   validate :currencies_validation
   validate :manager_validation
 
@@ -20,6 +23,11 @@ class Transaction < ApplicationRecord
     "#{first_name} #{last_name}"
   end
 
+  # Check if this is a large or extra large transaction
+  def requires_personal_info?
+    large? || extra_large?
+  end
+
   def large?
     from_amount_in_usd > Money.from_amount(100)
   end
@@ -28,34 +36,27 @@ class Transaction < ApplicationRecord
     from_amount_in_usd > Money.from_amount(1000)
   end
 
+  # Optimize by memoizing the result
   def from_amount_in_usd
-    from_amount.exchange_to('USD')
+    @from_amount_in_usd ||= from_amount.exchange_to('USD')
   end
 
   private
 
   def generate_uid
-    self.uid = SecureRandom.hex(5)
+    self.uid = SecureRandom.hex(10) # Make the UID longer for added security
   end
 
   def convert
-    if self.to_amount.blank?
-      self.to_amount = from_amount.exchange_to(self.to_currency)
-    end
+    self.to_amount ||= from_amount.exchange_to(to_currency) # Only convert if to_amount is not already set
   end
 
   def currencies_validation
-    if from_currency == to_currency
-      errors.add(:from_currency, "can't be converted to the same currency.")
-    end
-    if !extra_large? && from_currency != 'USD'
-      errors.add(:from_currency, "available only for conversions over $1000.")
-    end
+    errors.add(:from_currency, "can't be converted to the same currency.") if from_currency == to_currency
+    errors.add(:from_currency, "available only for conversions over $1000.") if !extra_large? && from_currency != 'USD'
   end
 
   def manager_validation
-    if extra_large? && !manager
-      errors.add(:base, "conversions over $1000 require personal manager.")
-    end
+    errors.add(:base, "conversions over $1000 require a personal manager.") if extra_large? && manager.nil?
   end
 end
